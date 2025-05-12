@@ -111,6 +111,12 @@ export default function Recorder() {
         if (hand[0]) {
           sendHandPosition(hand[0][0], hand[0][1]);
         }
+        // Detect pinch and send click
+        if (isPinching(hand)) {
+          if (typeof window !== 'undefined' && window.electronAPI) {
+            window.electronAPI.sendGestureAction({ type: 'mouse_click' });
+          }
+        }
       });
     };
   
@@ -151,16 +157,22 @@ export default function Recorder() {
       };
     }, []);
 
-    
-  
+    const isPinching = (hand: number[][]): boolean => {
+      if (!hand[4] || !hand[8]) return false; // 4: thumb tip, 8: index tip
+      const dx = hand[4][0] - hand[8][0];
+      const dy = hand[4][1] - hand[8][1];
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      return distance < 0.05; // Adjust threshold as needed
+    };
+
     return (
       <main style={{ padding: 32, minHeight: '100vh', position: 'relative' }}>
         <div className='flex justify-center items-center '>
-        <div style={{ margin: '20px 0', position: 'relative', width: 500, height: 375 }}>
+        <div style={{ margin: '20px 0', position: 'relative', width: 800, height: 450 }}>
           <video
             ref={videoRef}
-            width={500}
-            height={375}
+            width={800}
+            height={450}
             style={{
               border: '1px solid #ccc',
               background: '#000',
@@ -175,8 +187,8 @@ export default function Recorder() {
           />
           <canvas
             ref={overlayCanvasRef}
-            width={500}
-            height={375}
+            width={800}
+            height={450}
             style={{
               display: recording ? 'block' : 'none',
               position: 'absolute',
