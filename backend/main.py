@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pyautogui
+from typing import Optional
 
 
 
@@ -10,9 +11,10 @@ app = FastAPI()
 
 class Action(BaseModel):
     type: str
-    x: int = None
-    y: int = None
-    key: str = None
+    x: Optional[int] = None
+    y: Optional[int] = None
+    key: Optional[str] = None
+    direction: Optional[str] = None
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,7 +22,11 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+
+
+    
 )
+
 
 
 @app.post("/control")
@@ -42,5 +48,11 @@ def control(action: Action):
         pyautogui.press(action.key)
         print(f"pressed {action.key}")
         return {"status": f"pressed {action.key}"}
+    elif action.type == "scroll" and hasattr(action, "direction"):
+        if action.direction == "up":
+            pyautogui.scroll(300)  # positive for up, negative for down
+        elif action.direction == "down":
+            pyautogui.scroll(-300)
+        return {"status": f"scrolled {action.direction}"}
     
     return {"status": "unknown action"}

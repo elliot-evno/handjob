@@ -6,7 +6,7 @@ import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 declare global {
   interface Window {
     electronAPI: {
-      sendGestureAction: (action: { type: string; x?: number; y?: number; key?: string }) => void;
+      sendGestureAction: (action: { type: string; x?: number; y?: number; key?: string; direction?: string }) => void;
     };
   }
 }
@@ -34,6 +34,7 @@ export default function Recorder() {
     const [maxX, setMaxX] = useState(0);
     const [minY, setMinY] = useState(1);
     const [maxY, setMaxY] = useState(0);
+    const prevFingerY = useRef<{ y8: number; y12: number; time: number } | null>(null);
   
     const startRecording = async () => {
       setVideoURL(null);
@@ -158,9 +159,34 @@ export default function Recorder() {
         const lGesture = isLGesture(hand);
         if (lGesture) {
           const action = { type: 'key_press', key: 'enter' };
-          console.log('Sending action:', action);
           window.electronAPI.sendGestureAction(action);
-          console.log('L GESTURE DETECTED');
+        }
+
+        if (hand[8] && hand[12]) {
+          const now = Date.now();
+          const y8 = hand[8][1];
+          const y12 = hand[12][1];
+
+          if (prevFingerY.current) {
+            const dy8 = prevFingerY.current.y8 - y8; // positive if moved up
+            const dy12 = prevFingerY.current.y12 - y12;
+            const dt = now - prevFingerY.current.time;
+
+            // If both fingers moved up quickly
+            if (dy8 > 0.08 && dy12 > 0.08 && dt < 300) {
+              window.electronAPI.sendGestureAction({ type: 'scroll', direction: 'up' });
+              console.log('SCROLL UP DETECTED');
+              prevFingerY.current = null;
+            } else if (dy8 < -0.08 && dy12 < -0.08 && dt < 300) {
+              window.electronAPI.sendGestureAction({ type: 'scroll', direction: 'down' });
+              console.log('SCROLL DOWN DETECTED');
+              prevFingerY.current = null;
+            } else {
+              prevFingerY.current = { y8, y12, time: now };
+            }
+          } else {
+            prevFingerY.current = { y8, y12, time: now };
+          }
         }
       });
       ctx.restore();

@@ -1,6 +1,8 @@
 // main.js
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
+
+
 const fetch = require('node-fetch'); // Make sure you're using node-fetch@2
 
 function createWindow() {
@@ -75,6 +77,23 @@ ipcMain.on('gesture-action', async (event, action) => {
       });
     } catch (err) {
       console.error('Failed to send key_press to Python server:', err);
+    }
+  } else if (action.type === 'scroll' && action.direction) {
+    console.log('Forwarding scroll to backend:', action);
+    try {
+      const response = await fetch('http://localhost:8000/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'scroll', direction: action.direction }),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        console.error('Backend rejected scroll:', response.status, text);
+      } else {
+        console.log('Backend scroll response:', response.status, text);
+      }
+    } catch (err) {
+      console.error('Failed to send scroll to Python server:', err);
     }
   }
 });
