@@ -2,6 +2,13 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 
+declare global {
+  interface Window {
+    electronAPI: {
+      sendGestureAction: (action: { type: string; x?: number; y?: number }) => void;
+    };
+  }
+}
 
 export default function Recorder() {
     const [recording, setRecording] = useState(false);
@@ -57,12 +64,11 @@ export default function Recorder() {
   
     const handleGestureAction = (label: string) => {
       if (typeof window === 'undefined' || !window.electronAPI) return;
-      if (label === 'swipe_left') {
-        window.electronAPI.sendGestureAction({ type: 'move', x: 0, y: 500 });
+      if (label === 'peace') {
+        window.electronAPI.sendGestureAction({ type: 'mouse_move', x: 0, y: 500 });
       } else if (label === 'fist') {
-        window.electronAPI.sendGestureAction({ type: 'click' });
+        window.electronAPI.sendGestureAction({ type: 'mouse_click' });
       }
-      // Add more mappings as needed
     };
   
     const sendFrameToBackend = async (imageDataUrl: string) => {
@@ -98,6 +104,7 @@ export default function Recorder() {
         }, 200); // every 200ms
       }
       return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [recording]);
   
     // Clean up on unmount
@@ -108,6 +115,8 @@ export default function Recorder() {
         }
       };
     }, []);
+
+    
   
     return (
       <main style={{ padding: 32, minHeight: '100vh', position: 'relative' }}>

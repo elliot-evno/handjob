@@ -11,9 +11,9 @@
   },
   "dependencies": {
     "next": "15.3.2",
+    "node-fetch": "^2.7.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "robotjs": "^0.6.0"
+    "react-dom": "^19.0.0"
   },
   "main": "main.js",
   "devDependencies": {
@@ -23,6 +23,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "electron": "^36.2.0",
+    "electron-rebuild": "^3.2.9",
     "eslint": "^9",
     "eslint-config-next": "15.3.2",
     "tailwindcss": "^4",
