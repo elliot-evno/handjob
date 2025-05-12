@@ -6,11 +6,19 @@ import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 declare global {
   interface Window {
     electronAPI: {
-      sendGestureAction: (action: { type: string; x?: number; y?: number }) => void;
+      sendGestureAction: (action: { type: string; x?: number; y?: number; key?: string }) => void;
     };
   }
 }
 
+const HAND_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],      // Thumb
+  [0,5],[5,6],[6,7],[7,8],      // Index
+  [5,9],[9,10],[10,11],[11,12], // Middle
+  [9,13],[13,14],[14,15],[15,16], // Ring
+  [13,17],[17,18],[18,19],[19,20], // Pinky
+  [0,17] // Palm base to pinky base
+];
 
 export default function Recorder() {
     const [recording, setRecording] = useState(false);
@@ -22,6 +30,10 @@ export default function Recorder() {
     const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const handLandmarkerRef = useRef<HandLandmarker | null>(null);
     const [isHolding, setIsHolding] = useState(false);
+    const [minX, setMinX] = useState(1);
+    const [maxX, setMaxX] = useState(0);
+    const [minY, setMinY] = useState(1);
+    const [maxY, setMaxY] = useState(0);
   
     const startRecording = async () => {
       setVideoURL(null);
@@ -64,7 +76,7 @@ export default function Recorder() {
         videoRef.current.srcObject = null;
       }
     };
-
+  
   
     useEffect(() => {
       // Load the hand landmarker model once
@@ -77,8 +89,11 @@ export default function Recorder() {
             modelAssetPath:
               "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
           },
-          numHands: 2,
+          numHands: 1,
           runningMode: "VIDEO",
+          minHandDetectionConfidence: 0.7,
+          minHandPresenceConfidence: 0.7,
+          minTrackingConfidence: 0.7,
         });
       };
       loadModel();
@@ -91,7 +106,6 @@ export default function Recorder() {
         window.electronAPI.sendGestureAction({ type: 'mouse_move', x: screenX, y: screenY });
       }
     };
-  
     const drawKeypoints = (landmarks: number[][][]) => {
       const canvas = overlayCanvasRef.current;
       const video = videoRef.current;
@@ -101,24 +115,34 @@ export default function Recorder() {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = "red";
+
+      // Mirror the canvas horizontally to match the video
+      ctx.save();
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
       landmarks.forEach((hand: number[][]) => {
-        hand.forEach((point: number[]) => {
-          ctx.beginPath();
-          ctx.arc(point[0] * canvas.width, point[1] * canvas.height, 4, 0, 2 * Math.PI);
-          ctx.fill();
-        });
-        // Send wrist position (landmark 0) to Electron for mouse movement
+        drawConnectors(ctx, hand, HAND_CONNECTIONS, { color: "#00FF00", lineWidth: 3 });
+        drawLandmarks(ctx, hand, { color: "#FF0000", lineWidth: 4 });
+      
+        // Calibration for mouse movement only
         if (hand[0]) {
-          sendHandPosition(hand[0][0], hand[0][1]);
+          setMinX(prev => Math.min(prev, hand[0][0]));
+          setMaxX(prev => Math.max(prev, hand[0][0]));
+          setMinY(prev => Math.min(prev, hand[0][1]));
+          setMaxY(prev => Math.max(prev, hand[0][1]));
+      
+          const normX = (hand[0][0] - minX) / (maxX - minX || 1);
+          const normY = (hand[0][1] - minY) / (maxY - minY || 1);
+      
+          sendHandPosition(normX, normY);
         }
-        // Detect pinch (thumb-index) and send click
+      
+        // Use raw hand landmarks for gesture detection!
         if (isPinching(hand)) {
           if (typeof window !== 'undefined' && window.electronAPI) {
             window.electronAPI.sendGestureAction({ type: 'mouse_click' });
           }
         }
-        // Detect index-middle pinch for hold
         const pinching = isIndexMiddlePinching(hand);
         if (pinching && !isHolding) {
           setIsHolding(true);
@@ -131,7 +155,15 @@ export default function Recorder() {
             window.electronAPI.sendGestureAction({ type: 'mouse_up' });
           }
         }
+        const lGesture = isLGesture(hand);
+        if (lGesture) {
+          const action = { type: 'key_press', key: 'enter' };
+          console.log('Sending action:', action);
+          window.electronAPI.sendGestureAction(action);
+          console.log('L GESTURE DETECTED');
+        }
       });
+      ctx.restore();
     };
   
     useEffect(() => {
@@ -187,6 +219,49 @@ export default function Recorder() {
       return distance < 0.05; // Adjust threshold as needed
     };
 
+
+
+    const isLGesture = (hand: number[][]): boolean => {
+      if (!hand[0] || !hand[4] || !hand[8]) return false;
+      const wrist = hand[0];
+      // Thumb and index are extended (far from wrist)
+      const thumbDist = Math.hypot(hand[4][0] - wrist[0], hand[4][1] - wrist[1]);
+      const indexDist = Math.hypot(hand[8][0] - wrist[0], hand[8][1] - wrist[1]);
+      // Other fingers are folded (close to wrist)
+      const folded = [12, 16, 20].every(i => {
+        if (!hand[i]) return false;
+        const dist = Math.hypot(hand[i][0] - wrist[0], hand[i][1] - wrist[1]);
+        return dist < 0.15; // Adjust threshold as needed
+      });
+      return thumbDist > 0.18 && indexDist > 0.18 && folded;
+    };
+
+    function drawConnectors(ctx: CanvasRenderingContext2D, landmarks: number[][], connections: number[][], style: {color: string, lineWidth: number}) {
+      const { color, lineWidth } = style;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidth;
+      connections.forEach(([start, end]) => {
+        const s = landmarks[start];
+        const e = landmarks[end];
+        if (s && e) {
+          ctx.beginPath();
+          ctx.moveTo(s[0] * ctx.canvas.width, s[1] * ctx.canvas.height);
+          ctx.lineTo(e[0] * ctx.canvas.width, e[1] * ctx.canvas.height);
+          ctx.stroke();
+        }
+      });
+    }
+
+    function drawLandmarks(ctx: CanvasRenderingContext2D, landmarks: number[][], style: {color: string, lineWidth: number}) {
+      const { color, lineWidth } = style;
+      ctx.fillStyle = color;
+      landmarks.forEach((point) => {
+        ctx.beginPath();
+        ctx.arc(point[0] * ctx.canvas.width, point[1] * ctx.canvas.height, lineWidth, 0, 2 * Math.PI);
+        ctx.fill();
+      });
+    }
+  
     return (
       <main style={{ padding: 32, minHeight: '100vh', position: 'relative' }}>
         <div className='flex justify-center items-center '>
@@ -196,6 +271,8 @@ export default function Recorder() {
             width={800}
             height={450}
             style={{
+              width: 800,
+              height: 450,
               border: '1px solid #ccc',
               background: '#000',
               display: recording ? 'block' : 'none',
@@ -203,6 +280,7 @@ export default function Recorder() {
               top: 0,
               left: 0,
               zIndex: 1,
+              transform: 'scaleX(-1)',
             }}
             autoPlay
             muted
@@ -212,6 +290,8 @@ export default function Recorder() {
             width={800}
             height={450}
             style={{
+              width: 800,
+              height: 450,
               display: recording ? 'block' : 'none',
               position: 'absolute',
               top: 0,

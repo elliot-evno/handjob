@@ -20,6 +20,7 @@ function createWindow() {
 app.whenReady().then(createWindow);
 
 ipcMain.on('gesture-action', async (event, action) => {
+  console.log('Received gesture action:', action);
   // Only forward mouse_move actions with valid coordinates
   if (action.type === 'mouse_move' && typeof action.x === 'number' && typeof action.y === 'number') {
     try {
@@ -44,6 +45,36 @@ ipcMain.on('gesture-action', async (event, action) => {
       });
     } catch (err) {
       console.error('Failed to send mouse_click to Python server:', err);
+    }
+  } else if (action.type === 'mouse_down') {
+    try {
+      await fetch('http://localhost:8000/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'mouse_down' }),
+      });
+    } catch (err) {
+      console.error('Failed to send mouse_down to Python server:', err);
+    }
+  } else if (action.type === 'mouse_up') {
+    try {
+      await fetch('http://localhost:8000/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'mouse_up' }),
+      });
+    } catch (err) {
+      console.error('Failed to send mouse_up to Python server:', err);
+    }
+  } else if (action.type === 'key_press' && action.key) {
+    try {
+      await fetch('http://localhost:8000/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'key_press', key: action.key }),
+      });
+    } catch (err) {
+      console.error('Failed to send key_press to Python server:', err);
     }
   }
 });

@@ -12,6 +12,7 @@ class Action(BaseModel):
     type: str
     x: int = None
     y: int = None
+    key: str = None
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,6 +25,7 @@ app.add_middleware(
 
 @app.post("/control")
 def control(action: Action):
+    print(f"received action: {action}")
     if action.type == "mouse_move" and action.x is not None and action.y is not None:
         pyautogui.moveTo(action.x, action.y)
         return {"status": "moved", "x": action.x, "y": action.y}
@@ -36,4 +38,9 @@ def control(action: Action):
     elif action.type == "mouse_up":
         pyautogui.mouseUp()
         return {"status": "mouse_up"}
+    elif action.type == "key_press" and hasattr(action, "key"):
+        pyautogui.press(action.key)
+        print(f"pressed {action.key}")
+        return {"status": f"pressed {action.key}"}
+    
     return {"status": "unknown action"}
