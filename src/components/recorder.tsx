@@ -21,6 +21,7 @@ export default function Recorder() {
     const videoChunks = useRef<Blob[]>([]);
     const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
     const handLandmarkerRef = useRef<HandLandmarker | null>(null);
+    const [isHolding, setIsHolding] = useState(false);
   
     const startRecording = async () => {
       setVideoURL(null);
@@ -111,10 +112,23 @@ export default function Recorder() {
         if (hand[0]) {
           sendHandPosition(hand[0][0], hand[0][1]);
         }
-        // Detect pinch and send click
+        // Detect pinch (thumb-index) and send click
         if (isPinching(hand)) {
           if (typeof window !== 'undefined' && window.electronAPI) {
             window.electronAPI.sendGestureAction({ type: 'mouse_click' });
+          }
+        }
+        // Detect index-middle pinch for hold
+        const pinching = isIndexMiddlePinching(hand);
+        if (pinching && !isHolding) {
+          setIsHolding(true);
+          if (typeof window !== 'undefined' && window.electronAPI) {
+            window.electronAPI.sendGestureAction({ type: 'mouse_down' });
+          }
+        } else if (!pinching && isHolding) {
+          setIsHolding(false);
+          if (typeof window !== 'undefined' && window.electronAPI) {
+            window.electronAPI.sendGestureAction({ type: 'mouse_up' });
           }
         }
       });
@@ -161,6 +175,14 @@ export default function Recorder() {
       if (!hand[4] || !hand[8]) return false; // 4: thumb tip, 8: index tip
       const dx = hand[4][0] - hand[8][0];
       const dy = hand[4][1] - hand[8][1];
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      return distance < 0.05; // Adjust threshold as needed
+    };
+
+    const isIndexMiddlePinching = (hand: number[][]): boolean => {
+      if (!hand[8] || !hand[12]) return false; // 8: index tip, 12: middle tip
+      const dx = hand[8][0] - hand[12][0];
+      const dy = hand[8][1] - hand[12][1];
       const distance = Math.sqrt(dx * dx + dy * dy);
       return distance < 0.05; // Adjust threshold as needed
     };

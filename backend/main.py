@@ -30,4 +30,10 @@ def control(action: Action):
     elif action.type == "mouse_click":
         pyautogui.click()
         return {"status": "clicked"}
+    elif action.type == "mouse_down":
+        pyautogui.mouseDown()
+        return {"status": "mouse_down"}
+    elif action.type == "mouse_up":
+        pyautogui.mouseUp()
+        return {"status": "mouse_up"}
     return {"status": "unknown action"}
