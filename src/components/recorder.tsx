@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 
 declare global {
   interface Window {
@@ -10,6 +11,7 @@ declare global {
   }
 }
 
+
 export default function Recorder() {
     const [recording, setRecording] = useState(false);
     const [videoURL, setVideoURL] = useState<string | null>(null);
@@ -17,8 +19,8 @@ export default function Recorder() {
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const videoChunks = useRef<Blob[]>([]);
-    const canvasRef = useRef<HTMLCanvasElement | null>(null);
-    const [topLabel, setTopLabel] = useState<{ label: string; score: number } | null>(null);
+    const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const handLandmarkerRef = useRef<HandLandmarker | null>(null);
   
     const startRecording = async () => {
       setVideoURL(null);
@@ -61,47 +63,80 @@ export default function Recorder() {
         videoRef.current.srcObject = null;
       }
     };
+
   
-    const handleGestureAction = (label: string) => {
-      if (typeof window === 'undefined' || !window.electronAPI) return;
-      if (label === 'peace') {
-        window.electronAPI.sendGestureAction({ type: 'mouse_move', x: 0, y: 500 });
-      } else if (label === 'fist') {
-        window.electronAPI.sendGestureAction({ type: 'mouse_click' });
+    useEffect(() => {
+      // Load the hand landmarker model once
+      const loadModel = async () => {
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+        );
+        handLandmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+          },
+          numHands: 2,
+          runningMode: "VIDEO",
+        });
+      };
+      loadModel();
+    }, []);
+  
+    const sendHandPosition = (x: number, y: number) => {
+      if (typeof window !== 'undefined' && window.electronAPI) {
+        const screenX = Math.round((1 - x) * window.screen.width);
+        const screenY = Math.round(y * window.screen.height);
+        window.electronAPI.sendGestureAction({ type: 'mouse_move', x: screenX, y: screenY });
       }
     };
   
-    const sendFrameToBackend = async (imageDataUrl: string) => {
-      const response = await fetch('http://localhost:8000/classify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: imageDataUrl }),
+    const drawKeypoints = (landmarks: number[][][]) => {
+      const canvas = overlayCanvasRef.current;
+      const video = videoRef.current;
+      if (!canvas || !video) return;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "red";
+      landmarks.forEach((hand: number[][]) => {
+        hand.forEach((point: number[]) => {
+          ctx.beginPath();
+          ctx.arc(point[0] * canvas.width, point[1] * canvas.height, 4, 0, 2 * Math.PI);
+          ctx.fill();
+        });
+        // Send wrist position (landmark 0) to Electron for mouse movement
+        if (hand[0]) {
+          sendHandPosition(hand[0][0], hand[0][1]);
+        }
       });
-      const data = await response.json();
-      // Find the top result
-      if (data.result && Array.isArray(data.result) && data.result.length > 0) {
-        const top = data.result.reduce((a: { score: number }, b: { score: number }) => (a.score > b.score ? a : b));
-        setTopLabel(top);
-        handleGestureAction(top.label);
-      }
-      console.log(data);
     };
   
     useEffect(() => {
       let interval: NodeJS.Timeout;
-      if (recording && videoRef.current && canvasRef.current) {
-        interval = setInterval(() => {
+      if (recording && videoRef.current && overlayCanvasRef.current && handLandmarkerRef.current) {
+        interval = setInterval(async () => {
           const video = videoRef.current!;
-          const canvas = canvasRef.current!;
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const dataUrl = canvas.toDataURL('image/jpeg');
-            sendFrameToBackend(dataUrl);
+          // Only run detection if video is ready and has size
+          if (
+            !handLandmarkerRef.current ||
+            video.readyState < 2 || // HAVE_CURRENT_DATA
+            video.videoWidth === 0 ||
+            video.videoHeight === 0
+          ) {
+            return;
           }
-        }, 200); // every 200ms
+          const results = await handLandmarkerRef.current.detectForVideo(video, performance.now());
+          if (results.landmarks) {
+            // Convert NormalizedLandmark[][] to number[][] for drawKeypoints
+            const landmarksAsNumbers = results.landmarks.map(
+              (hand) => hand.map((point) => [point.x, point.y])
+            );
+            drawKeypoints(landmarksAsNumbers);
+          }
+        }, 100); // every 100ms
       }
       return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -121,7 +156,7 @@ export default function Recorder() {
     return (
       <main style={{ padding: 32, minHeight: '100vh', position: 'relative' }}>
         <div className='flex justify-center items-center '>
-        <div style={{ margin: '20px 0' }}>
+        <div style={{ margin: '20px 0', position: 'relative', width: 500, height: 375 }}>
           <video
             ref={videoRef}
             width={500}
@@ -130,9 +165,26 @@ export default function Recorder() {
               border: '1px solid #ccc',
               background: '#000',
               display: recording ? 'block' : 'none',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              zIndex: 1,
             }}
             autoPlay
             muted
+          />
+          <canvas
+            ref={overlayCanvasRef}
+            width={500}
+            height={375}
+            style={{
+              display: recording ? 'block' : 'none',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              zIndex: 2,
+              pointerEvents: 'none',
+            }}
           />
         </div>
         {videoURL && (
@@ -159,27 +211,6 @@ export default function Recorder() {
         >
           {recording ? 'Stop Recording' : 'Start Recording'}
         </button>
-        {topLabel && (
-          <div
-            style={{
-              position: 'fixed',
-              left: '50%',
-              bottom: 220,
-              transform: 'translateX(-50%)',
-              zIndex: 1001,
-              background: 'rgba(255,255,255,0.9)',
-              padding: '16px 32px',
-              borderRadius: 16,
-              fontSize: 24,
-              fontWeight: 'bold',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-              color: 'black',
-            }}
-          >
-            {topLabel.label} ({(topLabel.score * 100).toFixed(1)}%)
-          </div>
-        )}
-        <canvas ref={canvasRef} style={{ display: 'none' }} />
       </main>
     );
   }

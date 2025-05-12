@@ -1,14 +1,12 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from transformers import pipeline
-from PIL import Image
-import io
-import base64
 from pydantic import BaseModel
 import pyautogui
 
+
+
 app = FastAPI()
-pipe = pipeline("image-classification", model="prithivMLmods/Hand-Gesture-19")
+
 
 class Action(BaseModel):
     type: str
@@ -22,25 +20,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-def decode_base64_image(data_url):
-    header, encoded = data_url.split(",", 1)
-    img_bytes = base64.b64decode(encoded)
-    return Image.open(io.BytesIO(img_bytes))
-
-@app.post("/classify")
-async def classify(request: Request):
-    data = await request.json()
-    image_data_url = data['image']
-    image = decode_base64_image(image_data_url)
-    result = pipe(image)
-    return {"result": result}
-
-
-
-
-
-
 
 
 @app.post("/control")
