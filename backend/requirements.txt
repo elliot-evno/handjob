@@ -1,0 +1,6 @@
+fastapi 
+uvicorn 
+pillow 
+transformers 
+torch
+pyautogui
