@@ -50,9 +50,9 @@ def control(action: Action):
         return {"status": f"pressed {action.key}"}
     elif action.type == "scroll" and hasattr(action, "direction"):
         if action.direction == "up":
-            pyautogui.scroll(300)  # positive for up, negative for down
+            pyautogui.scroll(50)  # positive for up, negative for down
         elif action.direction == "down":
-            pyautogui.scroll(-300)
+            pyautogui.scroll(-50)
         return {"status": f"scrolled {action.direction}"}
     
     return {"status": "unknown action"}

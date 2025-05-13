@@ -188,6 +188,13 @@ export default function Recorder() {
             prevFingerY.current = { y8, y12, time: now };
           }
         }
+
+        const middleFingerGesture = isMiddleFingerGesture(hand);
+        if (middleFingerGesture) {
+          if (typeof window !== 'undefined' && window.electronAPI) {
+            window.electronAPI.sendGestureAction({ type: 'key_press', key: 'delete' });
+          }
+        }
       });
       ctx.restore();
     };
@@ -245,8 +252,6 @@ export default function Recorder() {
       return distance < 0.05; // Adjust threshold as needed
     };
 
-
-
     const isLGesture = (hand: number[][]): boolean => {
       if (!hand[0] || !hand[4] || !hand[8]) return false;
       const wrist = hand[0];
@@ -260,6 +265,36 @@ export default function Recorder() {
         return dist < 0.15; // Adjust threshold as needed
       });
       return thumbDist > 0.18 && indexDist > 0.18 && folded;
+    };
+
+    const isMiddleFingerGesture = (hand: number[][]): boolean => {
+      if (!hand[0] || !hand[12]) return false;
+      const wrist = hand[0];
+      
+      // Middle finger is extended (far from wrist)
+      const middleDist = Math.hypot(hand[12][0] - wrist[0], hand[12][1] - wrist[1]);
+      
+      // Other fingers are folded (close to wrist)
+      const fingerDistances = [4, 8, 16, 20].map(i => {
+        if (!hand[i]) return null;
+        return Math.hypot(hand[i][0] - wrist[0], hand[i][1] - wrist[1]);
+      });
+      
+      // Adjust thresholds based on observed values
+      const folded = fingerDistances.every(dist => dist !== null && dist < 0.25); // Increased from 0.15
+      
+      // Debug logging
+      console.log('Middle finger distance:', middleDist);
+      console.log('Other finger distances:', fingerDistances);
+      console.log('All fingers folded:', folded);
+      
+      // Increased threshold for middle finger extension from 0.18 to 0.35
+      const isGesture = middleDist > 0.35 && folded;
+      if (isGesture) {
+        console.log('Middle finger gesture conditions met!');
+      }
+      
+      return isGesture;
     };
 
     function drawConnectors(ctx: CanvasRenderingContext2D, landmarks: number[][], connections: number[][], style: {color: string, lineWidth: number}) {
