@@ -20,6 +20,73 @@ const HAND_CONNECTIONS = [
   [0,17] // Palm base to pinky base
 ];
 
+// Helper to calculate distance between two 2D points
+const calculateDistance = (p1: number[], p2: number[]): number => {
+  if (!p1 || !p2) return Infinity;
+  return Math.sqrt(Math.pow(p1[0] - p2[0], 2) + Math.pow(p1[1] - p2[1], 2));
+};
+
+// Detects a fist with index and middle fingers pointing up or down
+const isFistWithFingersScroll = (hand: number[][]): 'up' | 'down' | null => {
+  if (hand.length < 21) return null; // Ensure all landmarks are present
+
+  const wrist = hand[0];
+  const indexTip = hand[8];
+  const indexMcp = hand[5]; // Index finger MCP joint
+  const middleTip = hand[12];
+  const middleMcp = hand[9]; // Middle finger MCP joint
+  const ringTip = hand[16];
+  const ringMcp = hand[13];
+  const pinkyTip = hand[20];
+  const pinkyMcp = hand[17];
+
+  // Thresholds (these may need fine-tuning)
+  const fingerFoldedToMcpThreshold = 0.09; // Max distance from tip to its MCP for a folded finger
+  const fingerFoldedToWristThreshold = 0.16; // Max distance from tip to wrist for a folded finger
+  const fingerExtendedMinYDiff = 0.08;   // Min Y-distance from tip to MCP for extended fingers to indicate direction
+  const fingerParallelMaxYDiff = 0.07;  // Max Y-difference between index and middle tip for them to be "parallel"
+  const tipMinMcDistance = 0.1; // Min distance for index/middle tips from their MCPs to be considered extended
+
+  // 1. Check if ring and pinky fingers are folded
+  const isRingFolded = calculateDistance(ringTip, ringMcp) < fingerFoldedToMcpThreshold || calculateDistance(ringTip, wrist) < fingerFoldedToWristThreshold;
+  const isPinkyFolded = calculateDistance(pinkyTip, pinkyMcp) < fingerFoldedToMcpThreshold || calculateDistance(pinkyTip, wrist) < fingerFoldedToWristThreshold;
+  
+  if (!isRingFolded || !isPinkyFolded) {
+    return null;
+  }
+
+  // 2. Check if index and middle fingers are extended
+  const isIndexExtended = calculateDistance(indexTip, indexMcp) > tipMinMcDistance;
+  const isMiddleExtended = calculateDistance(middleTip, middleMcp) > tipMinMcDistance;
+
+  if (!isIndexExtended || !isMiddleExtended) {
+    return null;
+  }
+
+  // 3. Determine direction based on Y-coordinates of index and middle finger tips
+  const indexTipY = indexTip[1];
+  const middleTipY = middleTip[1];
+  const indexMcpY = indexMcp[1];
+  const middleMcpY = middleMcp[1];
+
+  // Ensure index and middle fingers are somewhat vertically aligned (tips y-coords are close)
+  if (Math.abs(indexTipY - middleTipY) > fingerParallelMaxYDiff) {
+    return null;
+  }
+
+  // Check for UP scroll (finger tips are above their MCPs)
+  if (indexTipY < indexMcpY - fingerExtendedMinYDiff && middleTipY < middleMcpY - fingerExtendedMinYDiff) {
+    return 'up';
+  }
+
+  // Check for DOWN scroll (finger tips are below their MCPs)
+  if (indexTipY > indexMcpY + fingerExtendedMinYDiff && middleTipY > middleMcpY + fingerExtendedMinYDiff) {
+    return 'down';
+  }
+
+  return null;
+};
+
 export default function Recorder() {
     const [recording, setRecording] = useState(false);
     const [videoURL, setVideoURL] = useState<string | null>(null);
@@ -34,7 +101,8 @@ export default function Recorder() {
     const [maxX, setMaxX] = useState(0);
     const [minY, setMinY] = useState(1);
     const [maxY, setMaxY] = useState(0);
-    const prevFingerY = useRef<{ y8: number; y12: number; time: number } | null>(null);
+    const prevPosition = useRef<{ x: number; y: number } | null>(null);
+    const prevVelocity = useRef<{ dx: number; dy: number } | null>(null);
   
     const startRecording = async () => {
       setVideoURL(null);
@@ -102,9 +170,45 @@ export default function Recorder() {
   
     const sendHandPosition = (x: number, y: number) => {
       if (typeof window !== 'undefined' && window.electronAPI) {
+        // Use very aggressive smoothing
+        const alpha = 0.08; // Even more smoothing
         const screenX = Math.round((1 - x) * window.screen.width);
         const screenY = Math.round(y * window.screen.height);
-        window.electronAPI.sendGestureAction({ type: 'mouse_move', x: screenX, y: screenY });
+        
+        // Store previous position in ref
+        if (!prevPosition.current) {
+          prevPosition.current = { x: screenX, y: screenY };
+          return; // Skip first frame
+        }
+        
+        // Calculate velocity-based smoothing
+        const dx = screenX - prevPosition.current.x;
+        const dy = screenY - prevPosition.current.y;
+        
+        // Apply double smoothing
+        const velocitySmoothing = 0.2;
+        if (!prevVelocity.current) {
+          prevVelocity.current = { dx: 0, dy: 0 };
+        }
+        
+        // Smooth the velocity first
+        const smoothDx = prevVelocity.current.dx + (dx - prevVelocity.current.dx) * velocitySmoothing;
+        const smoothDy = prevVelocity.current.dy + (dy - prevVelocity.current.dy) * velocitySmoothing;
+        
+        // Then smooth the position
+        const smoothX = Math.round(prevPosition.current.x + smoothDx * alpha);
+        const smoothY = Math.round(prevPosition.current.y + smoothDy * alpha);
+        
+        // Minimum movement threshold
+        const minMovement = 3; // Increased threshold
+        if (Math.abs(smoothX - prevPosition.current.x) > minMovement || 
+            Math.abs(smoothY - prevPosition.current.y) > minMovement) {
+          window.electronAPI.sendGestureAction({ type: 'mouse_move', x: smoothX, y: smoothY });
+        }
+        
+        // Update previous states
+        prevPosition.current = { x: smoothX, y: smoothY };
+        prevVelocity.current = { dx: smoothDx, dy: smoothDy };
       }
     };
     const drawKeypoints = (landmarks: number[][][]) => {
@@ -117,7 +221,6 @@ export default function Recorder() {
       if (!ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Mirror the canvas horizontally to match the video
       ctx.save();
       ctx.translate(canvas.width, 0);
       ctx.scale(-1, 1);
@@ -125,7 +228,6 @@ export default function Recorder() {
         drawConnectors(ctx, hand, HAND_CONNECTIONS, { color: "#00FF00", lineWidth: 3 });
         drawLandmarks(ctx, hand, { color: "#FF0000", lineWidth: 4 });
       
-        // Calibration for mouse movement only
         if (hand[0]) {
           setMinX(prev => Math.min(prev, hand[0][0]));
           setMaxX(prev => Math.max(prev, hand[0][0]));
@@ -138,7 +240,6 @@ export default function Recorder() {
           sendHandPosition(normX, normY);
         }
       
-        // Use raw hand landmarks for gesture detection!
         if (isPinching(hand)) {
           if (typeof window !== 'undefined' && window.electronAPI) {
             window.electronAPI.sendGestureAction({ type: 'mouse_click' });
@@ -162,33 +263,6 @@ export default function Recorder() {
           window.electronAPI.sendGestureAction(action);
         }
 
-        if (hand[8] && hand[12]) {
-          const now = Date.now();
-          const y8 = hand[8][1];
-          const y12 = hand[12][1];
-
-          if (prevFingerY.current) {
-            const dy8 = prevFingerY.current.y8 - y8; // positive if moved up
-            const dy12 = prevFingerY.current.y12 - y12;
-            const dt = now - prevFingerY.current.time;
-
-            // If both fingers moved up quickly
-            if (dy8 > 0.08 && dy12 > 0.08 && dt < 300) {
-              window.electronAPI.sendGestureAction({ type: 'scroll', direction: 'up' });
-              console.log('SCROLL UP DETECTED');
-              prevFingerY.current = null;
-            } else if (dy8 < -0.08 && dy12 < -0.08 && dt < 300) {
-              window.electronAPI.sendGestureAction({ type: 'scroll', direction: 'down' });
-              console.log('SCROLL DOWN DETECTED');
-              prevFingerY.current = null;
-            } else {
-              prevFingerY.current = { y8, y12, time: now };
-            }
-          } else {
-            prevFingerY.current = { y8, y12, time: now };
-          }
-        }
-
         const middleFingerGesture = isMiddleFingerGesture(hand);
         if (middleFingerGesture) {
           if (typeof window !== 'undefined' && window.electronAPI) {
@@ -200,32 +274,71 @@ export default function Recorder() {
     };
   
     useEffect(() => {
-      let interval: NodeJS.Timeout;
+      let handDetectionIntervalId: NodeJS.Timeout;
+      let continuousScrollIntervalId: NodeJS.Timeout | null = null;
+      let currentScrollDirection: 'up' | 'down' | null = null;
+
+      const stopContinuousScroll = () => {
+        if (continuousScrollIntervalId) {
+          clearInterval(continuousScrollIntervalId);
+          continuousScrollIntervalId = null;
+        }
+        currentScrollDirection = null;
+      };
+
       if (recording && videoRef.current && overlayCanvasRef.current && handLandmarkerRef.current) {
-        interval = setInterval(async () => {
+        handDetectionIntervalId = setInterval(async () => {
           const video = videoRef.current!;
-          // Only run detection if video is ready and has size
           if (
             !handLandmarkerRef.current ||
-            video.readyState < 2 || // HAVE_CURRENT_DATA
+            video.readyState < 2 || 
             video.videoWidth === 0 ||
             video.videoHeight === 0
           ) {
+            stopContinuousScroll();
             return;
           }
           const results = await handLandmarkerRef.current.detectForVideo(video, performance.now());
-          if (results.landmarks) {
-            // Convert NormalizedLandmark[][] to number[][] for drawKeypoints
+          
+          if (results.landmarks && results.landmarks.length > 0) {
             const landmarksAsNumbers = results.landmarks.map(
               (hand) => hand.map((point) => [point.x, point.y])
             );
-            drawKeypoints(landmarksAsNumbers);
+            drawKeypoints(landmarksAsNumbers); // For drawing and other non-continuous gestures
+
+            // Continuous Scroll Logic
+            const hand = landmarksAsNumbers[0]; // Assuming one hand for this gesture
+            const detectedScrollDir = isFistWithFingersScroll(hand);
+
+            if (detectedScrollDir) {
+              if (currentScrollDirection !== detectedScrollDir) {
+                stopContinuousScroll(); // Stop previous scroll if direction changes or starts new
+                currentScrollDirection = detectedScrollDir;
+                continuousScrollIntervalId = setInterval(() => {
+                  if (typeof window !== 'undefined' && window.electronAPI) {
+                    window.electronAPI.sendGestureAction({ type: 'scroll', direction: currentScrollDirection! });
+                  }
+                }, 150); // Adjust interval (ms) for scroll speed/responsiveness
+              }
+            } else { // No continuous scroll gesture detected
+              if (currentScrollDirection) { // If it was scrolling, stop it
+                stopContinuousScroll();
+              }
+            }
+          } else { // No hand landmarks detected
+            drawKeypoints([]); // Clear canvas if needed
+            if (currentScrollDirection) { // If it was scrolling, stop it
+              stopContinuousScroll();
+            }
           }
-        }, 100); // every 100ms
+        }, 33); // Hand detection runs at ~30fps (adjust from 16ms if too CPU intensive)
       }
-      return () => clearInterval(interval);
+      return () => {
+        clearInterval(handDetectionIntervalId);
+        stopContinuousScroll(); // Cleanup on effect unmount or when `recording` changes
+      };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [recording]);
+    }, [recording]); // Removed drawKeypoints from dependencies as it's stable
   
     // Clean up on unmount
     useEffect(() => {
