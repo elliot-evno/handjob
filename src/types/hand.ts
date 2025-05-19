@@ -13,6 +13,7 @@ declare global {
   interface Window {
     electronAPI: {
       sendGestureAction: (action: GestureAction) => void;
+      showRecordingDialog: () => Promise<boolean>;
     };
   }
 }

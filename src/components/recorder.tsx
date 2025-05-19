@@ -12,20 +12,16 @@ import {
   isMiddleFingerGesture 
 } from '../utils/gestureUtils';
 
-
 export default function Recorder() {
   const [recording, setRecording] = useState(false);
-  const [videoURL, setVideoURL] = useState<string | null>(null);
   const [isHolding, setIsHolding] = useState(false);
   const [minX, setMinX] = useState(1);
   const [maxX, setMaxX] = useState(0);
   const [minY, setMinY] = useState(1);
   const [maxY, setMaxY] = useState(0);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const videoChunks = useRef<Blob[]>([]);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const handLandmarkerRef = useRef<HandLandmarker | null>(null);
   const prevPosition = useRef<{ x: number; y: number } | null>(null);
@@ -138,6 +134,12 @@ export default function Recorder() {
         minHandPresenceConfidence: 0.7,
         minTrackingConfidence: 0.7,
       });
+
+      // Show dialog after model is loaded
+      const shouldStart = await window.electronAPI.showRecordingDialog();
+      if (shouldStart) {
+        startRecording();
+      }
     };
     loadModel();
   }, []);
@@ -213,8 +215,7 @@ export default function Recorder() {
   }, []);
 
   const startRecording = async () => {
-    setVideoURL(null);
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
     streamRef.current = stream;
 
     if (videoRef.current) {
@@ -222,98 +223,25 @@ export default function Recorder() {
       videoRef.current.play();
     }
 
-    mediaRecorderRef.current = new MediaRecorder(stream);
-    videoChunks.current = [];
-
-    mediaRecorderRef.current.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        videoChunks.current.push(event.data);
-      }
-    };
-
-    mediaRecorderRef.current.onstop = () => {
-      const videoBlob = new Blob(videoChunks.current, { type: 'video/webm' });
-      setVideoURL(URL.createObjectURL(videoBlob));
-      stream.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    };
-
-    mediaRecorderRef.current.start();
     setRecording(true);
   };
 
-  const stopRecording = () => {
-    mediaRecorderRef.current?.stop();
-    setRecording(false);
-    if (videoRef.current) {
-      videoRef.current.pause();
-      videoRef.current.srcObject = null;
-    }
-  };
-
+  // Return null instead of any visible elements
   return (
-    <main style={{ padding: 32, minHeight: '100vh', position: 'relative' }}>
-      <div className='flex justify-center items-center'>
-        <div style={{ margin: '20px 0', position: 'relative', width: 800, height: 450 }}>
-          <video
-            ref={videoRef}
-            width={800}
-            height={450}
-            style={{
-              width: 800,
-              height: 450,
-              border: '1px solid #ccc',
-              background: '#000',
-              display: recording ? 'block' : 'none',
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              zIndex: 1,
-              transform: 'scaleX(-1)',
-            }}
-            autoPlay
-            muted
-          />
-          <canvas
-            ref={overlayCanvasRef}
-            width={800}
-            height={450}
-            style={{
-              width: 800,
-              height: 450,
-              display: recording ? 'block' : 'none',
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              zIndex: 2,
-              pointerEvents: 'none',
-            }}
-          />
-        </div>
-        {videoURL && (
-          <div style={{ marginTop: 20 }}>
-            <video src={videoURL} controls width={500} height={375} />
-            <div>
-              <a href={videoURL} download="recording.webm">
-                Download recording
-              </a>
-            </div>
-          </div>
-        )}
-      </div>
-      <button
-        className='btn btn-primary bg-white text-black rounded-full px-4 py-2 border-2 cursor-pointer'
-        onClick={recording ? stopRecording : startRecording}
-        style={{
-          position: 'fixed',
-          left: '50%',
-          bottom: 140,
-          transform: 'translateX(-50%)',
-          zIndex: 1000,
-        }}
-      >
-        {recording ? 'Stop Recording' : 'Start Recording'}
-      </button>
-    </main>
+    <div aria-hidden="true" style={{ position: 'absolute', visibility: 'hidden', pointerEvents: 'none', width: 0, height: 0, overflow: 'hidden' }}>
+      <video
+        ref={videoRef}
+        width={800}
+        height={450}
+        autoPlay
+        muted
+        playsInline
+      />
+      <canvas
+        ref={overlayCanvasRef}
+        width={800}
+        height={450}
+      />
+    </div>
   );
 }

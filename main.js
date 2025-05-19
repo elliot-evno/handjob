@@ -1,14 +1,14 @@
 // main.js
 const { app, BrowserWindow, ipcMain } = require('electron');
+const { exec } = require('child_process');
 const path = require('path');
-
-
-const fetch = require('node-fetch'); // Make sure you're using node-fetch@2
+const fetch = require('node-fetch');
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1200,
-    height: 900,
+    width: 800,
+    height: 450,
+    show: false,  // Window is hidden
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -20,6 +20,11 @@ function createWindow() {
 }
 
 app.whenReady().then(createWindow);
+
+// Prevent app from quitting when all windows are closed
+app.on('window-all-closed', (e) => {
+  e.preventDefault();
+});
 
 ipcMain.on('gesture-action', async (event, action) => {
   console.log('Received gesture action:', action);
@@ -95,5 +100,27 @@ ipcMain.on('gesture-action', async (event, action) => {
     } catch (err) {
       console.error('Failed to send scroll to Python server:', err);
     }
+  }
+});
+
+ipcMain.handle('show-recording-dialog', async () => {
+  const script = `
+    tell application "System Events"
+      display dialog "Would you like to start hand gesture recording?" buttons {"Cancel", "Start Recording"} default button "Start Recording" with title "Hand Gesture Control"
+      set button_pressed to button returned of result
+      return button_pressed
+    end tell
+  `;
+
+  try {
+    const { stdout } = await new Promise((resolve, reject) => {
+      exec(`osascript -e '${script}'`, (error, stdout, stderr) => {
+        if (error) reject(error);
+        else resolve({ stdout, stderr });
+      });
+    });
+    return stdout.trim() === "Start Recording";
+  } catch (error) {
+    return false;
   }
 });
